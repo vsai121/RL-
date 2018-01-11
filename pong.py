@@ -50,7 +50,7 @@ def bias_variable(shape):
 def conv2d(x, W):
   return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
 
-def init_weights():
+def init_network():
     W1 = weight_variable([8 , 8, 4 , 32])
     b1 = bias_variable([32])
    
@@ -65,13 +65,13 @@ def init_weights():
     
     input_layer = tf.placeholder("float", [None, RESIZED_SCREEN_X, RESIZED_SCREEN_Y,STATE_FRAMES])
 
-    hidden_layer1 = tf.nn.relu(tf.nn.conv2d(input_layer, W1, strides=[1, 4, 4, 1], padding="SAME") + b1))
+    hidden_layer1 = tf.nn.relu(tf.nn.conv2d(input_layer, W1, strides=[1, 4, 4, 1], padding="SAME") + b1)
     max_pool1 = tf.nn.max_pool(hidden_layer1, ksize=[1, 2, 2, 1],strides=[1, 2, 2, 1], padding="SAME")
     
-    hidden_layer2 = tf.nn.relu(tf.nn.conv2d(max_pool1, W2, strides=[1, 2, 2, 1], padding="SAME") + b2))
+    hidden_layer2 = tf.nn.relu(tf.nn.conv2d(max_pool1, W2, strides=[1, 2, 2, 1], padding="SAME") + b2)
     max_pool2 = tf.nn.max_pool(hidden_layer2, ksize=[1, 2, 2, 1],strides=[1, 2, 2, 1], padding="SAME")
     
-    hidden_layer3 = tf.nn.relu(tf.nn.conv2d(max_pool2, W3, strides=[1, 1, 1, 1], padding="SAME") + b3))
+    hidden_layer3 = tf.nn.relu(tf.nn.conv2d(max_pool2, W3, strides=[1, 1, 1, 1], padding="SAME") + b3)
     max_pool3 = tf.nn.max_pool(hidden_layer3, ksize=[1, 2, 2, 1],strides=[1, 2, 2, 1], padding="SAME")
     
     hidden_layer3_flat = tf.reshape(max_pool3, [-1, 256])
@@ -84,21 +84,20 @@ def init_weights():
 def main():
     env = gym.make('Pong-v0')
     
-    for i in range(20):
-        observation = env.reset()
-        previous_observation = None
+    sess = tf.Session()
+    input_layer , output_layer = init_network()
     
-        while True:
-            env.render()
-            action = env.action_space.sample()
-            observation , reward , done , info = env.step(action)
-            input_observation , previous_observation = process_obs(observation , previous_observation , (80,80))
-            plt.imshow(input_observation)
-            plt.show()
-            print(previous_observation.shape)
-            if done:
-                break
-           
+    action = tf.placeholder("float" , [None , ACTIONS_COUNT])
+    target = tf.placeholder("float" , [None])
+    
+    readout_action = tf.reduce_sum(tf.mul(output_layer, action), reduction_indices=1) 
+    
+    cost = tf.reduce_mean(tf.square(self._target - readout_action))
+    train_operation = tf.train.AdamOptimizer(1e-6).minimize(cost)
+        
+    sess.run(tf.initialize_all_variables())      
+        
+    mini_batch = random.sample(previous_observations, MINI_BATCH_SIZE)
         
         
 
