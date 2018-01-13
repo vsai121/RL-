@@ -89,14 +89,16 @@ def init_network():
     
     output_layer = tf.matmul(hidden_layer3_flat, W4) + b4
     predict = tf.argmax(output_layer , axis=1)
-    return input_layer, output_layer , predict , parameters
     
-            
-def loss(output_layer):
-    targetQ = tf.placeholder(shape=[None , 3] , dtype=tf.float32) 
-    loss = tf.reduce_sum(tf.square(nextQ - Qout))
+    nextQ = tf.placeholder(shape=[1,3],dtype=tf.float32)
+    loss = tf.reduce_sum(tf.square(nextQ - output_layer))
+    trainer = tf.train.AdamOptimizer(learning_rate=0.001)
+    updateModel = trainer.minimize(loss) 
     
-    return loss
+    return input_layer, output_layer , predict , parameters , nextQ , updateModel
+    
+ 
+
     
 def train(): 
 
@@ -106,12 +108,9 @@ def train():
     e = 0.1 #exploration
     num_episodes = 2000
     
-    jList = []
-    rList = []   
-    
     with tf.Session() as sess:
     
-        input_layer , output_layer , predict , parameters = init_network()
+        input_layer , output_layer , predict , parameters , nextQ ,updateModel = init_network()
         init = tf.global_variables_initializer()
         sess.run(init)
  
@@ -121,8 +120,53 @@ def train():
            
             while True:
                 
+                    input_observation , previous_observation = process_obs(observation , previous_observation , (80 , 80))
+                    input_observation = input_observation[np.newaxis,:,:,np.newaxis]
                     
-                
+                    Q  = sess.run(output_layer , feed_dict = {input_layer:input_observation})
+                    preds = sess.run(predict, feed_dict = {input_layer:input_observation})
+                    #print(preds)
+                    if preds==0:
+                        action = 0
+                        
+                    if preds==1:
+                        action = 2
+                        
+                    if preds==2:
+                        action = 3 
+                     
+                    if np.random.rand(1) < e:
+                        action = env.action_space.sample() 
+                           
+                    env.render()
+                    observation , reward , done , info = env.step(action)       
+                       
+                    input_observation , previous_observation = process_obs(observation , previous_observation , (80 , 80))
+                    input_observation = input_observation[np.newaxis,:,:,np.newaxis]
+                    
+                    Q1 = sess.run(output_layer , feed_dict ={input_layer:input_observation})
+                    maxQ1 = np.max(Q1 , axis=1)
+                    
+                    targetQ = Q
+                    targetQ[0,preds] = reward + gamma*maxQ1
+                    
+                    
+                    
+                    print(Q)
+                    print(preds)
+                    print(Q1)
+                    print(maxQ1)
+                    print(targetQ)
+                    
+                    print('\n\n\n\n')
+                    
+                    _ = sess.run(updateModel , feed_dict = {input_layer:input_observation , nextQ:targetQ})
+                    if done:
+                        break
+                    
+                    
+
+			
                 
 def main():
 
