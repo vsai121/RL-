@@ -103,6 +103,7 @@ def train():
     env = gym.make('Pong-v0')    
     
     gamma = 0.99
+    e = 0.1 #exploration
     num_episodes = 2000
     
     jList = []
@@ -117,24 +118,12 @@ def train():
         for _ in range(num_episodes):
             observation = env.reset()
             previous_observation = None
-            
+           
             while True:
-                input_observations = []    
-                for _ in range(1000):
-                    env.render()
-                    action = env.action_space.sample()
-                    observation , reward , done , info = env.step(action)
-                    input_observation , previous_observation = process_obs(observation , previous_observation  ,(80,80))
-                    input_observation = input_observation[:,:,np.newaxis]
-                    input_observations.append(input_observation)
-                    
-                    if done:
-                        break
-                if done:
-                    break
                 
-                allQ  = sess.run(output_layer , feed_dict = {input_layer:input_observations})
-                print(allQ)
+                    
+                
+                
 def main():
 
     train()
