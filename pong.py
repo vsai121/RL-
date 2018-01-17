@@ -13,16 +13,18 @@ from collections import deque, namedtuple
 
 env = gym.make('Pong-v0')
 
-valid_actions = [1,2,3]
-learning_rate = 0.001
+valid_actions = [0,1,2,3]
+learning_rate = 0.0001
 
 class imageProcessor():
     def __init__(self):
         with tf.variable_scope("state_processor"):
             self.input_state = tf.placeholder(shape=[210, 160, 3], dtype=tf.uint8)
-            self.output = tf.image.rgb_to_grayscale(self.input_state)
-            self.output = tf.image.crop_to_bounding_box(self.output, 34, 0, 160, 160)
-            self.output = tf.image.resize_images(self.output, [84, 84], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+            self.output = self.input_state[35:195]
+            self.output =  self.output[::2, ::2, :]
+            self.output = tf.image.rgb_to_grayscale(self.output)
+            
+            self.output = tf.image.resize_images(self.output, [80, 80], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
             self.output = tf.squeeze(self.output)
 
 
@@ -53,54 +55,64 @@ while True:
     if done:
         break    
         
-"""                   
-                
+  """                
 class Estimator():
-    def __init__(self , scope="estimator"):
+
+    def __init__(self, scope="estimator"):
         self.scope = scope
-        
         with tf.variable_scope(scope):
-            self.build_model()
+            self._build_model()
             
+    def _build_model(self):
 
+        self.X_pl = tf.placeholder(shape=[None, 80, 80, 4], dtype=tf.uint8, name="X")
+        
+        self.y_pl = tf.placeholder(shape=[None], dtype=tf.float32, name="y")
+   
+        self.actions_pl = tf.placeholder(shape=[None], dtype=tf.int32, name="actions")
 
-    def build_model(self):
-        self.X = tf.placeholder(shape=[None , 84 , 84 , 4] , dtype=tf.float32)
-        
-        #Target value
-        self.Y = tf.placeholder(shape=[None] , dtype=tf.float32)
-        
-        self.action = tf.placeholder(shape=[None] , dtype=tf.int32)
-        
-        batch_size = tf.shape(self.X)[0]
-        
-        conv1 = tf.contrib.layers.conv2d(self.X, 32, 8, 4, activation_fn=tf.nn.relu)
+        X = tf.to_float(self.X_pl) / 255.0
+        batch_size = tf.shape(self.X_pl)[0]
+
+ 
+        conv1 = tf.contrib.layers.conv2d(X, 32, 8, 4, activation_fn=tf.nn.relu)
         conv2 = tf.contrib.layers.conv2d(conv1, 64, 4, 2, activation_fn=tf.nn.relu)
-        conv3 = tf.contrib.layers.conv2d(conv2, 64, 3, 1, activation_fn=tf.nn.relu)  
-         
+        conv3 = tf.contrib.layers.conv2d(conv2, 64, 3, 1, activation_fn=tf.nn.relu)
+
         flattened = tf.contrib.layers.flatten(conv3)
         fc1 = tf.contrib.layers.fully_connected(flattened, 512)
-        self.predictions= tf.contrib.layers.fully_connected(fc1, len(valid_actions))  
-   
-         
-        self.losses = tf.squared_difference(self.Y, self.action_predictions)
+        self.predictions = tf.contrib.layers.fully_connected(fc1, len(valid_actions))
+
+        
+        gather_indices = tf.range(batch_size) * tf.shape(self.predictions)[1] + self.actions_pl
+        self.action_predictions = tf.gather(tf.reshape(self.predictions, [-1]), gather_indices)
+
+        self.losses = tf.squared_difference(self.y_pl, self.action_predictions)
         self.loss = tf.reduce_mean(self.losses)
 
         self.optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
         self.train_op = self.optimizer.minimize(self.loss)
-               
-         
-    def predict(self , sess , s):
-        return sess.run(self.predictions, feed_dict = {self.X: s})
+
         
+
+    def predict(self, sess, s):
+        
+        return sess.run(self.predictions, { self.X_pl: s })
+
     def update(self, sess, s, a, y):
+      
+        feed_dict = { self.X_pl: s, self.y_pl: y, self.actions_pl: a }
+        _, loss = sess.run([self.train_op, self.loss],feed_dict)
+        
+        return loss
+        
     
-        _,loss = sess.run([self.train_op, self.loss],feed_dict={self.X: s, self.Y: y, self.action:a})
-        return loss 
         
-        
+  
+       
+
 tf.reset_default_graph()
-global_step = tf.Variable(0, name="global_step", trainable=False)
+global_step = tf.Variable(0, name="global_step", trainable=True)
 
 e = Estimator(scope="test")
 ip = imageProcessor()
@@ -110,19 +122,37 @@ with tf.Session() as sess:
     
     # Example observation batch
     observation = env.reset()
-    
     observation_p = ip.process(sess, observation)
+    plt.imshow(observation_p)
+    plt.show()
     observation = np.stack([observation_p] * 4, axis=2)
     observations = np.array([observation] * 2)
     
+   
     # Test Prediction
-    print(e.predict(sess, observations))
 
     # Test training step
-    y = np.array([10.0, 10.0])
-    a = np.array([1, 3])
-    print(e.update(sess, observations, a, y))
+    y = np.array([10,10])
+    a = np.array([1, 1])
+    
+    for i in range(10):      
+        print(e.update(sess, observations, a, y))
+ 
+     
+
+
+def make_policy(estimator , nA):
+    
+    def policy_fn(sess , observation , epsilon):
+        A = np.ones(nA, dtype=float) * epsilon / nA
+        q_values = estimator.predict(sess, np.expand_dims(observation, 0))[0]
+
+        bestAction = np.argmax(q_values)
         
-        
+        A[best_action] += 1-epsilon
          
-                       
+        return A
+        
+    return policy_fn
+    
+ 
