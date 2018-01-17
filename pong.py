@@ -65,14 +65,14 @@ class Estimator():
             
     def _build_model(self):
 
-        self.X_pl = tf.placeholder(shape=[None, 80, 80, 4], dtype=tf.uint8, name="X")
+        self.X = tf.placeholder(shape=[None, 80, 80, 4], dtype=tf.uint8, name="X")
         
-        self.y_pl = tf.placeholder(shape=[None], dtype=tf.float32, name="y")
+        self.Y = tf.placeholder(shape=[None], dtype=tf.float32, name="y")
    
-        self.actions_pl = tf.placeholder(shape=[None], dtype=tf.int32, name="actions")
+        self.actions = tf.placeholder(shape=[None], dtype=tf.int32, name="actions")
 
-        X = tf.to_float(self.X_pl) / 255.0
-        batch_size = tf.shape(self.X_pl)[0]
+        X = tf.to_float(self.X) / 255.0
+        batch_size = tf.shape(self.X)[0]
 
  
         conv1 = tf.contrib.layers.conv2d(X, 32, 8, 4, activation_fn=tf.nn.relu)
@@ -84,10 +84,10 @@ class Estimator():
         self.predictions = tf.contrib.layers.fully_connected(fc1, len(valid_actions))
 
         
-        gather_indices = tf.range(batch_size) * tf.shape(self.predictions)[1] + self.actions_pl
+        gather_indices = tf.range(batch_size) * tf.shape(self.predictions)[1] + self.actions
         self.action_predictions = tf.gather(tf.reshape(self.predictions, [-1]), gather_indices)
 
-        self.losses = tf.squared_difference(self.y_pl, self.action_predictions)
+        self.losses = tf.squared_difference(self.Y, self.action_predictions)
         self.loss = tf.reduce_mean(self.losses)
 
         self.optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
@@ -95,13 +95,13 @@ class Estimator():
 
         
 
-    def predict(self, sess, s):
-        
-        return sess.run(self.predictions, { self.X_pl: s })
+    def predict(self, sess, s):  
+               
+         return (sess.run(self.predictions, { self.X: s }))
 
     def update(self, sess, s, a, y):
       
-        feed_dict = { self.X_pl: s, self.y_pl: y, self.actions_pl: a }
+        feed_dict = { self.X: s, self.Y: y, self.actions: a }
         _, loss = sess.run([self.train_op, self.loss],feed_dict)
         
         return loss
@@ -110,6 +110,10 @@ class Estimator():
         
   
        
+"""
+
+To check if CNN is working
+
 
 tf.reset_default_graph()
 global_step = tf.Variable(0, name="global_step", trainable=True)
@@ -139,12 +143,13 @@ with tf.Session() as sess:
         print(e.update(sess, observations, a, y))
  
      
-
+"""
 
 def make_policy(estimator , nA):
     
     def policy_fn(sess , observation , epsilon):
         A = np.ones(nA, dtype=float) * epsilon / nA
+        #Predicgt q values using the neural network
         q_values = estimator.predict(sess, np.expand_dims(observation, 0))[0]
 
         bestAction = np.argmax(q_values)
@@ -154,5 +159,38 @@ def make_policy(estimator , nA):
         return A
         
     return policy_fn
+
+def deep_q_learning(sess,
+                    env,
+                    q_estimator,
+                    target_estimator,
+                    image_processor,
+                    num_episodes,
+                    replay_memory_size=50000,
+                    replay_memory_init_size=5000,
+                    update_target_estimator_every=10000,
+                    discount_factor=0.99,
+                    epsilon_start=1.0,
+                    epsilon_end=0.1,
+                    epsilon_decay_steps=500000,
+                    batch_size=32
+                    ):
+                    
+    policy = make_policy(q_estimator,len(VALID_ACTIONS))
     
+    for epsiode in range(1 , num_epsiodes+1):
+        state = env.reset()
+        state = image_processor(sess , state)
+        state = np.stack([state] * 4, axis=2)
+        
+        loss = None
+        
+        for t in timestep:
+            
+            action_probs = policy(sess, state, epsilon)
+            action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+            next_state, reward, done, _ = env.step(valid_actions[action])
+            next_state = state_processor.process(sess, next_state)
+            next_state = np.append(state[:,:,1:], np.expand_dims(next_state, 2), axis=2)
+                   
  
