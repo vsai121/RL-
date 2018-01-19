@@ -90,20 +90,18 @@ class Estimator():
         self.losses = tf.squared_difference(self.Y, self.action_predictions)
         self.loss = tf.reduce_mean(self.losses)
 
-        self.optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
+        self.optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6) #parameters from paper
         self.train_op = self.optimizer.minimize(self.loss)
 
         
 
-    def predict(self, sess, s):  
-               
+    def predict(self, sess, s):                 
          return (sess.run(self.predictions, { self.X: s }))
 
-    def update(self, sess, s, a, y):
-      
+    def update(self, sess, s, a, y):     
         feed_dict = { self.X: s, self.Y: y, self.actions: a }
-        _, loss = sess.run([self.train_op, self.loss],feed_dict)
-        
+        pred , _, loss = sess.run([self.predictions , self.train_op, self.loss],feed_dict)
+        print(pred)
         return loss
         
     
@@ -141,56 +139,73 @@ with tf.Session() as sess:
     
     for i in range(10):      
         print(e.update(sess, observations, a, y))
- 
-     
 """
+     
+
 
 def make_policy(estimator , nA):
     
     def policy_fn(sess , observation , epsilon):
         A = np.ones(nA, dtype=float) * epsilon / nA
-        #Predicgt q values using the neural network
+        #Predict q values using the neural network
         q_values = estimator.predict(sess, np.expand_dims(observation, 0))[0]
 
         bestAction = np.argmax(q_values)
         
-        A[best_action] += 1-epsilon
+        A[bestAction] += 1-epsilon
          
         return A
         
     return policy_fn
 
-def deep_q_learning(sess,
-                    env,
-                    q_estimator,
-                    target_estimator,
-                    image_processor,
-                    num_episodes,
-                    replay_memory_size=50000,
-                    replay_memory_init_size=5000,
-                    update_target_estimator_every=10000,
-                    discount_factor=0.99,
-                    epsilon_start=1.0,
-                    epsilon_end=0.1,
-                    epsilon_decay_steps=500000,
-                    batch_size=32
-                    ):
-                    
-    policy = make_policy(q_estimator,len(VALID_ACTIONS))
+
+qEstimator = Estimator(scope="q_estimator")
+def train(sess , num_games = 5000 , score_required = 50):
     
-    for epsiode in range(1 , num_epsiodes+1):
-        state = env.reset()
-        state = image_processor(sess , state)
-        state = np.stack([state] * 4, axis=2)
+    epsilon_start = 1
+    epsilon_end = 0.1
+    epsilon_decay_steps = 5000
         
-        loss = None
+    total_t = sess.run(tf.contrib.framework.get_global_step())
+
+    epsilons = np.linspace(epsilon_start, epsilon_end, epsilon_decay_steps)
+    
+    policy = make_policy(qEstimator , len(valid_actions))
+    
+    
+    replay_memory=[]
+    ip = imageProcessor()
+    
+    state = env.reset()
+    state = ip.process(sess, state)
+    state = np.stack([state] * 4, axis=2)
+    
+    for epsiode in range(num_games):
+        action_probs = policy(sess, state, epsilons[min(total_t, epsilon_decay_steps-1)])
+        action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
         
-        for t in timestep:
-            
-            action_probs = policy(sess, state, epsilon)
-            action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
-            next_state, reward, done, _ = env.step(valid_actions[action])
-            next_state = state_processor.process(sess, next_state)
-            next_state = np.append(state[:,:,1:], np.expand_dims(next_state, 2), axis=2)
-                   
+        next_state, reward, done, _ = env.step(valid_actions[action])
+        next_state = ip.process(sess, next_state)
+        next_state = np.append(state[:,:,1:], np.expand_dims(next_state, 2), axis=2)
+        
+        replay_memory.append((state, action, reward, next_state, done))
+        
+        if done:
+            state = env.reset()
+            state = ip.process(sess, state)
+            state = np.stack([state] * 4, axis=2)
+        else:
+            state = next_state
  
+    for i in range(num_games):
+        state , action , reward ,next_state , _ = replay_memory[i]
+        print(action),
+        print(reward) 
+
+global_step = tf.Variable(0, name='global_step', trainable=False)
+with tf.Session() as sess:
+    sess.run(tf.global_variables_initializer())
+    train(sess)      
+
+
+             
