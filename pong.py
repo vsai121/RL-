@@ -1,5 +1,4 @@
 import gym
-from gym.wrappers import Monitor
 import itertools
 import numpy as np
 import os
@@ -8,204 +7,114 @@ import sys
 import psutil
 import tensorflow as tf
 
-from matplotlib import pyplot as plt
-from collections import deque, namedtuple
-
 env = gym.make('Pong-v0')
 
-valid_actions = [0,1,2,3]
-learning_rate = 0.0001
+ACTIONS = 3 #up,down, stay
 
-class imageProcessor():
-    def __init__(self):
-        with tf.variable_scope("state_processor"):
-            self.input_state = tf.placeholder(shape=[210, 160, 3], dtype=tf.uint8)
-            self.output = self.input_state[35:195]
-            self.output =  self.output[::2, ::2, :]
-            self.output = tf.image.rgb_to_grayscale(self.output)
-            
-            self.output = tf.image.resize_images(self.output, [80, 80], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-            self.output = tf.squeeze(self.output)
+gamma = 0.99
 
+#for updating our gradient or training over time
+initial_eps= 1.0
+final_eps = 0.05
 
-    def process(self, sess, state):
+#how many frames to anneal epsilon
+explore= 50000 
+observe = 5000
 
-        return sess.run(self.output, feed_dict = { self.input_state: state })
-        
-        
-ip = imageProcessor()
+replay_memory = 50000
 
-"""
+batch_size = 64
 
-Code to test if image is being processed properly
+def downsample(image):
+    return image[::2, ::2, :]
 
-while True:
-    state = env.reset()
-    sess = tf.Session()
-    for timestep in range(2000):
-        env.render()
-        action = env.action_space.sample()
-        
-        next_state , reward , done , _ = env.step(action)
-        next_state = ip.process(sess , next_state)
-        print(next_state.shape)
-        plt.imshow(next_state)
-        plt.show()
-        
-    if done:
-        break    
-        
-  """                
-class Estimator():
+def remove_color(image):
+    return image[:, :, 0]
 
-    def __init__(self, scope="estimator"):
-        self.scope = scope
-        with tf.variable_scope(scope):
-            self._build_model()
-            
-    def _build_model(self):
-
-        self.X = tf.placeholder(shape=[None, 80, 80, 4], dtype=tf.uint8, name="X")
-        
-        self.Y = tf.placeholder(shape=[None], dtype=tf.float32, name="y")
-   
-        self.actions = tf.placeholder(shape=[None], dtype=tf.int32, name="actions")
-
-        X = tf.to_float(self.X) / 255.0
-        batch_size = tf.shape(self.X)[0]
-
- 
-        conv1 = tf.contrib.layers.conv2d(X, 32, 8, 4, activation_fn=tf.nn.relu)
-        conv2 = tf.contrib.layers.conv2d(conv1, 64, 4, 2, activation_fn=tf.nn.relu)
-        conv3 = tf.contrib.layers.conv2d(conv2, 64, 3, 1, activation_fn=tf.nn.relu)
-
-        flattened = tf.contrib.layers.flatten(conv3)
-        fc1 = tf.contrib.layers.fully_connected(flattened, 512)
-        self.predictions = tf.contrib.layers.fully_connected(fc1, len(valid_actions))
-
-        
-        gather_indices = tf.range(batch_size) * tf.shape(self.predictions)[1] + self.actions
-        self.action_predictions = tf.gather(tf.reshape(self.predictions, [-1]), gather_indices)
-
-        self.losses = tf.squared_difference(self.Y, self.action_predictions)
-        self.loss = tf.reduce_mean(self.losses)
-
-        self.optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6) #parameters from paper
-        self.train_op = self.optimizer.minimize(self.loss)
-
-        
-
-    def predict(self, sess, s):                 
-         return (sess.run(self.predictions, { self.X: s }))
-
-    def update(self, sess, s, a, y):     
-        feed_dict = { self.X: s, self.Y: y, self.actions: a }
-        pred , _, loss = sess.run([self.predictions , self.train_op, self.loss],feed_dict)
-        print(pred)
-        return loss
-        
+def remove_background(image):
+    image[image == 144] = 0
+    image[image == 109] = 0
+    return image
     
-        
+def process_image(image):
+    processed_image= image[35:195] # crop
+    processed_image = downsample(processed_image)
+    processed_image = remove_color(processed_image)
+    processed_image = remove_background(processed_image)
+    
+    return processed_image    
+
+def createNetwork():
+
+    inp = tf.placeholder("float", [None, 80, 80, 4])
+
+
+    W1= tf.Variable(tf.zeros([8, 8, 4, 32]))
+    b1 = tf.Variable(tf.zeros([32]))
+
+    W2 = tf.Variable(tf.zeros([4, 4, 32, 64]))
+    b2 = tf.Variable(tf.zeros([64]))
+
+    W3 = tf.Variable(tf.zeros([3, 3, 64, 64]))
+    b3 = tf.Variable(tf.zeros([64]))
+
+    W4 = tf.Variable(tf.zeros([576, 784]))
+    b4 = tf.Variable(tf.zeros([784]))
+
+    W5 = tf.Variable(tf.zeros([784, ACTIONS]))
+    b5 = tf.Variable(tf.zeros([ACTIONS]))
+
   
-       
-"""
+    conv1 = tf.nn.relu(tf.nn.conv2d(inp, W1, strides = [1, 4, 4, 1], padding = "VALID") + b1)
 
-To check if CNN is working
+    conv2 = tf.nn.relu(tf.nn.conv2d(conv1, W2, strides = [1, 2, 2, 1], padding = "VALID") + b2)
 
+    conv3 = tf.nn.relu(tf.nn.conv2d(conv2, W3, strides = [1, 1, 1, 1], padding = "VALID") + b3)
 
-tf.reset_default_graph()
-global_step = tf.Variable(0, name="global_step", trainable=True)
+    conv3_flat = tf.reshape(conv3, [-1, 576])
 
-e = Estimator(scope="test")
-ip = imageProcessor()
-
-with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
+    fc4 = tf.nn.relu(tf.matmul(conv3_flat, W4) + b4)
     
-    # Example observation batch
-    observation = env.reset()
-    observation_p = ip.process(sess, observation)
-    plt.imshow(observation_p)
-    plt.show()
-    observation = np.stack([observation_p] * 4, axis=2)
-    observations = np.array([observation] * 2)
+    fc5 = tf.matmul(fc4, W5) + b5
+
+    return inp, fc5
+
+def trainNetwork(inp, out, sess):
+
+    argmax = tf.placeholder("float", [None, ACTIONS]) 
+    y = tf.placeholder("float", [None]) #ground truth
+
+    action = tf.reduce_sum(tf.matmul(out, argmax), reduction_indices = 1)
+    loss = tf.reduce_mean(tf.square(action - y)) #Squared error loss
     
-   
-    # Test Prediction
+    train_step = tf.train.AdamOptimizer(1e-6).minimize(loss)
+	
 
-    # Test training step
-    y = np.array([10,10])
-    a = np.array([1, 1])
+
+    frame = env.reset()
+    processed_image = process_image(frame)
     
-    for i in range(10):      
-        print(e.update(sess, observations, a, y))
-"""
-     
-
-
-def make_policy(estimator , nA):
+    inp_t = np.stack((processed_image , processed_image , processed_image , processed_image) , axis=2)
     
-    def policy_fn(sess , observation , epsilon):
-        A = np.ones(nA, dtype=float) * epsilon / nA
-        #Predict q values using the neural network
-        q_values = estimator.predict(sess, np.expand_dims(observation, 0))[0]
+    sess.run(tf.initialize_all_variables())
 
-        bestAction = np.argmax(q_values)
-        
-        A[bestAction] += 1-epsilon
-         
-        return A
-        
-    return policy_fn
-
-
-qEstimator = Estimator(scope="q_estimator")
-def train(sess , num_games = 5000 , score_required = 50):
+    t = 0
+    epsilon = initial_eps
     
-    epsilon_start = 1
-    epsilon_end = 0.1
-    epsilon_decay_steps = 5000
-        
-    total_t = sess.run(tf.contrib.framework.get_global_step())
-
-    epsilons = np.linspace(epsilon_start, epsilon_end, epsilon_decay_steps)
+    while True:
+        out_t = out.eval(feed_dict = {inp : [inp_t]})[0]
     
-    policy = make_policy(qEstimator , len(valid_actions))
-    
-    
-    replay_memory=[]
-    ip = imageProcessor()
-    
-    state = env.reset()
-    state = ip.process(sess, state)
-    state = np.stack([state] * 4, axis=2)
-    
-    for epsiode in range(num_games):
-        action_probs = policy(sess, state, epsilons[min(total_t, epsilon_decay_steps-1)])
-        action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
-        
-        next_state, reward, done, _ = env.step(valid_actions[action])
-        next_state = ip.process(sess, next_state)
-        next_state = np.append(state[:,:,1:], np.expand_dims(next_state, 2), axis=2)
-        
-        replay_memory.append((state, action, reward, next_state, done))
-        
-        if done:
-            state = env.reset()
-            state = ip.process(sess, state)
-            state = np.stack([state] * 4, axis=2)
-        else:
-            state = next_state
- 
-    for i in range(num_games):
-        state , action , reward ,next_state , _ = replay_memory[i]
-        print(action),
-        print(reward) 
-
-global_step = tf.Variable(0, name='global_step', trainable=False)
-with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
-    train(sess)      
+        print(out_t.shape) 
 
 
-             
+def main():
+    #create session
+    sess = tf.InteractiveSession()
+    #input layer and output layer by creating graph
+    inp, out = createNetwork()
+    #train our graph on input and output with session variables
+    trainNetwork(inp, out, sess)
+
+if __name__ == "__main__":
+    main()
+
